@@ -1,0 +1,11 @@
+build/
+.vscode/*
+tags
+tags.lock
+.west/
+bootloader/
+modules/
+tools/
+zephyr/
+*.hex
+board-controller/build/
