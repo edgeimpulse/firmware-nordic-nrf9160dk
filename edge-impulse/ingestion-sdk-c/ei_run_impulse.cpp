@@ -26,7 +26,9 @@
 #include "ei_inertialsensor.h"
 #include "ei_microphone.h"
 #include "ei_device_nordic_nrf91.h"
-
+extern "C" {
+    #include "connectivity.h"
+};
 #if defined(EI_CLASSIFIER_SENSOR) && EI_CLASSIFIER_SENSOR == EI_CLASSIFIER_SENSOR_ACCELEROMETER
 
 /* Private variables ------------------------------------------------------- */
@@ -44,7 +46,7 @@ static bool acc_data_callback(const void *sample_buf, uint32_t byteLength)
 }
 
 // static void acc_read_data(float *values, size_t value_size)
-// {
+// {    
 //     for (size_t i = 0; i < value_size; i++) {
 //         values[i] = acc_buf[i];
 //     }
@@ -53,6 +55,8 @@ static bool acc_data_callback(const void *sample_buf, uint32_t byteLength)
 void run_nn(bool debug)
 {
     bool stop_inferencing = false;
+    float max;
+    size_t max_ix;
     // summary of inferencing settings (from model_metadata.h)
     ei_printf("Inferencing settings:\n");
     ei_printf("\tInterval: ");
@@ -100,7 +104,7 @@ void run_nn(bool debug)
         signal_t signal;
         int err = numpy::signal_from_buffer(acc_buf, EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE, &signal);
         if (err != 0) {
-            ei_printf("ERR: signal_from_buffer failed (%d)\n", err);
+            ei_printf("ERR: signal_from_buffer failed (%d)\n", err); 
         }
 
         // run the impulse: DSP, neural network and the Anomaly algorithm
@@ -114,15 +118,22 @@ void run_nn(bool debug)
         // print the predictions
         ei_printf("Predictions (DSP: %d ms., Classification: %d ms., Anomaly: %d ms.): \n",
             result.timing.dsp, result.timing.classification, result.timing.anomaly);
-        for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
+        for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {            
             ei_printf("    %s: \t", result.classification[ix].label);
             ei_printf_float(result.classification[ix].value);
             ei_printf("\r\n");
+            if (result.classification[ix].value > max) {
+                max = result.classification[ix].value;
+                max_ix = ix;
+            }
         }
+        /* Only for MQTT demo purposes */
+        ei_mqtt_publish(result.classification[max_ix].label);
+        max = 0.0;
 #if EI_CLASSIFIER_HAS_ANOMALY == 1
         ei_printf("    anomaly score: ");
         ei_printf_float(result.anomaly);
-        ei_printf("\r\n");
+        ei_printf("\r\n");        
 #endif
 
         if(ei_user_invoke_stop()) {
@@ -134,11 +145,6 @@ void run_nn(bool debug)
 #elif defined(EI_CLASSIFIER_SENSOR) && EI_CLASSIFIER_SENSOR == EI_CLASSIFIER_SENSOR_MICROPHONE
 void run_nn(bool debug)
 {
-    if (EI_CLASSIFIER_FREQUENCY != 16000) {
-        ei_printf("ERR: Frequency is %d but can only sample at 16000Hz\n", (int)EI_CLASSIFIER_FREQUENCY);
-        return;
-    }
-
     extern signal_t ei_microphone_get_signal();
 
     // summary of inferencing settings (from model_metadata.h)
@@ -218,11 +224,6 @@ void run_nn(bool debug)
 
 void run_nn_continuous(bool debug)
 {
-    if (EI_CLASSIFIER_FREQUENCY != 16000) {
-        ei_printf("ERR: Frequency is %d but can only sample at 16000Hz\n", (int)EI_CLASSIFIER_FREQUENCY);
-        return;
-    }
-
     bool stop_inferencing = false;
     int print_results = -(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW);
     // summary of inferencing settings (from model_metadata.h)

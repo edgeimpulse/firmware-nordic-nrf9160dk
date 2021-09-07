@@ -37,6 +37,11 @@
 
 #define EDGE_IMPULSE_AT_COMMAND_VERSION        "1.3.0"
 
+static void at_error_not_implemented()
+{
+    ei_printf("Command not implemented\r\n");
+}
+
 static void at_clear_config() {
     ei_printf("Clearing config and restarting system...\n");
     ei_config_clear();
@@ -445,26 +450,34 @@ static void at_boot_mode()
     ei_printf("AT+NACK\r");
 }
 
-/* Development test functions */
-/*
-static void at_flash_write() 
+static void at_mqtt_connect()
 {
-    zephyr_flash_write();
+    if (!ei_config_get_context()->mqtt_connect) {
+        at_error_not_implemented();
+        return;
+    }
+    if(!ei_config_get_context()->mqtt_connect()) {
+        ei_printf("ERROR: couldn't connect\n");
+    }
+    else {
+        ei_printf("OK\n");
+    }
 }
 
-
-static void at_flash_write1(char *buf) 
+static void at_get_mqtt_connect()
 {
-    uint8_t buff = (uint8_t) atoi(buf);
+    if (!ei_config_get_context()->get_mqtt_connect) {
+        at_error_not_implemented();
+        return;
+    }
 
-    zephyr_flash_write1(&buff);
+    if(ei_config_get_context()->get_mqtt_connect()) {
+        ei_printf("MQTT connected\n");
+    }
+    else {
+        ei_printf("MQTT disconnected\n");
+    }
 }
-
-static void at_flash_read() 
-{
-    zephyr_flash_read();
-}
-*/
 
 // AT commands related to configuration
 void ei_at_register_generic_cmds() {
@@ -495,12 +508,8 @@ void ei_at_register_generic_cmds() {
     ei_at_cmd_register("SAMPLESTART=", "Start sampling", &at_sample_start);
     ei_at_cmd_register("READRAW=", "Read raw from flash (START,LENGTH)", &at_read_raw);
     ei_at_cmd_register("BOOTMODE", "Jump to bootloader", &at_boot_mode);
-
-    /* Development testing commands */
-    //ei_at_cmd_register("fw", "Flash test, address is 0x73000", &at_flash_write);
-    //ei_at_cmd_register("fw=", "Write raw to flash, 4 bytes, address is 0x73000", &at_flash_write1);
-    //ei_at_cmd_register("fr=", "Read raw to flash, 4 bytes, address is 0x73000", &at_flash_read);
-    //ei_at_cmd_register("RUNACCEL1", "Run one data collection", &ei_intertial_read_data_one);
+    ei_at_cmd_register("CONNECT", "Connect to MQTT broker over LTE", &at_mqtt_connect);
+    ei_at_cmd_register("CONNECT?", "Get MQTT connection status", &at_get_mqtt_connect);
 }
 
 #endif // _EDGE_IMPULSE_AT_COMMANDS_CONFIG_H_

@@ -38,6 +38,10 @@
 #include <modem/modem_info.h>
 #endif
 
+extern "C" {
+    #include "connectivity.h"
+};
+
 extern "C" void ei_led_state_control(void);
 
 /* Constants --------------------------------------------------------------- */
@@ -50,9 +54,6 @@ extern "C" void ei_led_state_control(void);
 /** Led device struct */
 const struct device *led_dev;
 const struct device *uart;
-
-/** Max size for device id array */
-#define DEVICE_ID_MAX_SIZE  32
 
 /** Sensors */
 typedef enum
@@ -79,10 +80,6 @@ static const char *ei_device_type = "NRF9160_DK   ";
 #error "Unsupported build target was chosen!"
 #endif
 
-
-/** Device id array */
-static char ei_device_id[DEVICE_ID_MAX_SIZE];
-
 /** Device object, for this class only 1 object should exist */
 EiDeviceNRF91 EiDevice;
 
@@ -94,28 +91,54 @@ static int get_type_c(uint8_t out_buffer[32], size_t *out_size);
 static bool get_wifi_connection_status_c(void);
 static bool get_wifi_present_status_c(void);
 static bool read_sample_buffer(size_t begin, size_t length, void(*data_fn)(uint8_t*, size_t));
+static bool mqtt_connect_c(void);
+static bool get_mqtt_status_c(void);
 
 /* Public functions -------------------------------------------------------- */
+int str2int(const char* str, int len);
+
 
 EiDeviceNRF91::EiDeviceNRF91(void)
 {
     /* init device name to null only, it means it is not initialized so we have
     to do that on first access */
     memset(ei_device_id, 0, DEVICE_ID_MAX_SIZE);
+    memset(ei_imei, 0, DEVICE_ID_MAX_SIZE);
 }
 
 /**
- * @brief      For the device ID, the BLE mac address is used.
- *             The mac address string is copied to the out_buffer.
+ * @brief      Get the device ID (last 7 digits of IMEI)
  *
  * @param      out_buffer  Destination array for id string
  * @param      out_size    Length of id string
  *
- * @return     0
+ * @return     0 on success, negtive number on error
  */
 int EiDeviceNRF91::get_id(uint8_t out_buffer[32], size_t *out_size)
 {
-    return get_id_c(out_buffer, out_size);
+    int ret;
+
+    if(!this->ei_device_id[0])
+    {
+        ret = this->id_init();
+        if(ret)
+            return ret;
+    }
+
+    size_t length = strlen(this->ei_device_id);
+
+    if (length < 32)
+    {
+        memcpy(out_buffer, this->ei_device_id, length);
+
+        *out_size = length;
+        return 0;
+    }
+    else
+    {
+        *out_size = 0;
+        return -1;
+    }
 }
 
 /**
@@ -126,10 +149,24 @@ int EiDeviceNRF91::get_id(uint8_t out_buffer[32], size_t *out_size)
 const char *EiDeviceNRF91::get_id_pointer(void)
 {
     /* init ei_device_id if set to null bytes */
-    if(!ei_device_id[0]) {
-        id_init();
+    if(!this->ei_device_id[0]) {
+        this->id_init();
     }
-    return (const char *)ei_device_id;
+    return (const char *)this->ei_device_id;
+}
+
+/**
+ * @brief      Gets the pointer to IMEI string.
+ *
+ * @return     The pointer to IMEI string.
+ */
+const char *EiDeviceNRF91::get_imei_pointer(void)
+{
+    /* init ei_device_id if set to null bytes */
+    if(!this->ei_imei[0]) {
+        this->id_init();
+    }
+    return (const char *)this->ei_imei;
 }
 
 /**
@@ -244,6 +281,59 @@ void EiDeviceNRF91::set_state(tEiState state)
 
         ei_program_state = eiStateIdle;
     }
+}
+
+/**
+ * @brief      Fetch device ID and parse to string
+ *
+ * @return     0 If successful
+ * @return     -ENXIO If not successful
+ *
+ */
+int EiDeviceNRF91::id_init(void)
+{
+    /* Read IMEI from modem since ID registers are not accessible from non-secure */
+    int err = modem_info_init();
+    if (err)
+    {
+        return -ENXIO;
+    }
+
+    err = modem_info_string_get(MODEM_INFO_IMEI, this->ei_imei, DEVICE_ID_MAX_SIZE);
+    if (err < 0)
+    {
+        return -ENXIO;
+    }
+
+    /* Setup device ID from last 7 IMEI digits, which are unique per device */
+    snprintf(&ei_device_id[0], DEVICE_ID_MAX_SIZE,
+             "%02X:%02X:%02X:%02X:%02X:%02X",
+             str2int(&this->ei_imei[8 + 0], 2),
+             str2int(&this->ei_imei[8 + 2], 1),
+             str2int(&this->ei_imei[8 + 3], 1),
+             str2int(&this->ei_imei[8 + 4], 1),
+             str2int(&this->ei_imei[8 + 5], 1),
+             str2int(&this->ei_imei[8 + 6], 1));
+
+    return 0;
+}
+
+/**
+ * @brief      Connect to MQTT broker
+ *
+ */
+c_callback_status EiDeviceNRF91::mqtt_connect()
+{
+    return &mqtt_connect_c;
+}
+
+/**
+ * @brief      Get connection status to MQQTT broker
+ *
+ */
+c_callback_status EiDeviceNRF91::get_mqtt_status()
+{
+    return &get_mqtt_status_c;
 }
 
 /**
@@ -423,23 +513,7 @@ char ei_get_serial_byte(void) {
 /* Private functions ------------------------------------------------------- */
 static int get_id_c(uint8_t out_buffer[32], size_t *out_size)
 {
-    /* init ei_device_id if set to null bytes */
-    if (!ei_device_id[0]) {
-        id_init();
-    }
-
-    size_t length = strlen(ei_device_id);
-
-    if(length < 32) {
-        memcpy(out_buffer, ei_device_id, length);
-
-        *out_size = length;
-        return 0;
-    }
-    else {
-        *out_size = 0;
-        return -1;
-    }
+    return EiDevice.get_id(out_buffer, out_size);
 }
 
 static int get_type_c(uint8_t out_buffer[32], size_t *out_size)
@@ -466,6 +540,28 @@ static bool get_wifi_connection_status_c(void)
 static bool get_wifi_present_status_c(void)
 {
     return false;
+}
+
+static bool mqtt_connect_c()
+{
+    const char *imei = EiDevice.get_imei_pointer();
+
+    if(strlen(imei) < 8) {
+        ei_printf("ERR: ID too short!\n");
+        return false;
+    }
+
+    if(ei_mqtt_connect(&imei[8])) {
+        return false;
+    }
+    else {
+        return true;
+    }
+}
+
+static bool get_mqtt_status_c()
+{
+    return ei_get_mqtt_connected();
 }
 
 /**
@@ -658,79 +754,4 @@ int str2int(const char* str, int len)
         ret = ret * 10 + (str[i] - '0');
     }
     return ret;
-}
-
-/**
- * @brief      Fetch device ID and parse to string
- *
- * @return     0 If successful
- * @return     -ENXIO If not successful
- *
- */
-int id_init(void) 
-{
-    
-#if ((CONFIG_SOC_NRF52840 == 1) || \
-     (CONFIG_SOC_NRF52840_QIAA == 1))
-    /* Read nordic id from the registers */
-    uint32_t id_msb = (uint32_t)NRF_FICR->DEVICEID[1];
-    uint32_t id_lsb = (uint32_t)NRF_FICR->DEVICEID[0];
-
-     /* Setup device ID */
-    snprintf(&ei_device_id[0], DEVICE_ID_MAX_SIZE,
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             (unsigned int)((id_msb >> 8) & 0xFF),
-             (unsigned int)((id_msb >> 0) & 0xFF),
-             (unsigned int)((id_lsb >> 24) & 0xFF),
-             (unsigned int)((id_lsb >> 16) & 0xFF),
-             (unsigned int)((id_lsb >> 8) & 0xFF),
-             (unsigned int)((id_lsb >> 0) & 0xFF));
-
-
-#elif ((CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-       (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-    /* Read nordic id from the registers */
-    uint32_t id_msb = (uint32_t)NRF_FICR->INFO.DEVICEID[1];
-    uint32_t id_lsb = (uint32_t)NRF_FICR->INFO.DEVICEID[0];
-
-     /* Setup device ID */
-    snprintf(&ei_device_id[0], DEVICE_ID_MAX_SIZE,
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             (unsigned int)((id_msb >> 8) & 0xFF),
-             (unsigned int)((id_msb >> 0) & 0xFF),
-             (unsigned int)((id_lsb >> 24) & 0xFF),
-             (unsigned int)((id_lsb >> 16) & 0xFF),
-             (unsigned int)((id_lsb >> 8) & 0xFF),
-             (unsigned int)((id_lsb >> 0) & 0xFF));
-
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
-    /* Read IMEI from modem since ID registers are not accessible from non-secure */
-    int err = modem_info_init();
-    if(err)
-    {
-        return -ENXIO;
-    }
-    char id[16];
-    err = modem_info_string_get(MODEM_INFO_IMEI, id, sizeof(id));
-    if(err < 0)
-    {
-        return -ENXIO;
-    }
-
-     /* Setup device ID from last 7 IMEI digits, which are unique per device */
-    snprintf(&ei_device_id[0], DEVICE_ID_MAX_SIZE,
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             str2int(&id[8 + 0], 2),
-             str2int(&id[8 + 2], 1),
-             str2int(&id[8 + 3], 1),
-             str2int(&id[8 + 4], 1),
-             str2int(&id[8 + 5], 1),
-             str2int(&id[8 + 6], 1));
-
-#else
-#error "Unsupported build target was chosen!"
-#endif
-
-    return 0;
 }

@@ -69,6 +69,9 @@ extern void ei_printf(const char *format, ...);
 /** Number of sensors used */
 #define EI_DEVICE_N_SENSORS		2
 
+/** Max size for device id array */
+#define DEVICE_ID_MAX_SIZE 32
+
 /** EI ingestion and inferencing state */
 typedef enum
 {
@@ -95,11 +98,16 @@ class EiDeviceNRF91 : public EiDeviceInfo
 {
 private:
 	ei_device_sensor_t sensors[EI_DEVICE_N_SENSORS];
-public:	
+	int id_init(void);
+
+public:
+	char ei_imei[DEVICE_ID_MAX_SIZE];
+	char ei_device_id[DEVICE_ID_MAX_SIZE];
 	EiDeviceNRF91(void);
 	
 	int get_id(uint8_t out_buffer[32], size_t *out_size);
 	const char *get_id_pointer(void);
+	const char *get_imei_pointer(void);
 	int get_type(uint8_t out_buffer[32], size_t *out_size);
 	const char *get_type_pointer(void);
 	bool get_wifi_connection_status(void);
@@ -112,6 +120,8 @@ public:
 
 	c_callback get_id_function(void);
 	c_callback get_type_function(void);
+	c_callback_status mqtt_connect(void);
+	c_callback_status get_mqtt_status(void);
 	c_callback_status get_wifi_connection_status_function(void);
 	c_callback_status get_wifi_present_status_function(void);
 	c_callback_read_sample_buffer get_read_sample_buffer_function(void);

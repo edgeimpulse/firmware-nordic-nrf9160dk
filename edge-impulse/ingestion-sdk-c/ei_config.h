@@ -129,6 +129,10 @@ typedef struct {
     // Get the last error from the remote management interface (if applicable)
     bool (*mgmt_get_last_error)(char *error, size_t error_size);
 
+    bool (*mqtt_connect)(void);
+
+    bool (*get_mqtt_connect)(void);
+
 } ei_config_ctx_t;
 
 // Only single context has to be active, so store this here

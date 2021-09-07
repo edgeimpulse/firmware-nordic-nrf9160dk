@@ -118,6 +118,41 @@ Or you can build this application with Docker (see below).
     1. Copy `build/zephyr/zephyr.bin` to the `JLINK` mass storage device.
 
 
-## Working with other sensors
+## MQTT demo
 
-You can easily add support for other accelerometers, PDM microphones or even completely different sensors to this firmware through either built-in Zephyr drivers, or through the Zephyr sensor API. See the [examples for the nRF52840 DK](https://github.com/edgeimpulse/firmware-nrf52840-5340-dk#working-with-other-sensors) for more info.
+To see the output of inference process, make to following steps after deploying ML model:
+1. Insert SIM Card to nRF9160DK and power cycle the board.
+1. Open Serial Port Terminal of the nRF9160DK (use first port eg. `ttyACM0` on Linux) on baud rate 115,200.
+1. Connect the board to MQTT server via:
+
+    ```
+    AT+CONNECT
+    ```
+
+    The connection can take while and as a result you should get the `OK` response or `ERROR` if something went wrong.
+
+1. After successfull connection run the model:
+
+    ```
+    AT+RUNIMPULSE
+    ```
+
+    or:
+
+    ```
+    AT+RUNIMPULSECONT
+    ```
+
+1. Open [HiveMQ Online MQTT Client](http://www.hivemq.com/demos/websocket-client/) and click `Connect`
+
+    ![HiveMQ Online MQTT Client](./doc/online-mqtt-client-connect.png)
+
+1. After connection, click `Add New Topic Subscription`, in the dialog enter topic `ei/demo` and click `Subscribe`
+
+    ![MQTT Client Subscribe](./doc/online-mqtt-client-subscribe.png)
+
+    ![MQTT Client topic subscription](./doc/online-mqtt-client-topic.png)
+
+1. After that you should start seeing messages incoming from `nRF9160DK`
+
+    ![MQTT Client topic subscription](./doc/online-mqtt-client-messages.png)
