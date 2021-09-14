@@ -6,6 +6,5 @@ tags.lock
 bootloader/
 modules/
 tools/
-zephyr/
 *.hex
 board-controller/build/
