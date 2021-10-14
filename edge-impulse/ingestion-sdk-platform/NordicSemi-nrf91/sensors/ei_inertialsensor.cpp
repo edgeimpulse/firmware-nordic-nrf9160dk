@@ -44,18 +44,7 @@
 #define FLASH_WRITE_TIME_US 543
 #define CORRECTION_TIME_US  400
 
-#if ((CONFIG_SOC_NRF52840 == 1) || \
-       (CONFIG_SOC_NRF52840_QIAA == 1))
-#define I2C_DEV "I2C_0"
-#elif ((CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-       (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-#define I2C_DEV "I2C_1"
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
 #define I2C_DEV "I2C_2"
-#else 
-#error "Unsupported build target was chosen!"
-#endif
 
 extern ei_config_t *ei_config_get_config();
 extern EI_CONFIG_ERROR ei_config_set_sample_interval(float interval);
@@ -76,6 +65,7 @@ int16_t data_raw_acceleration[N_AXIS_SAMPLED];
 
 int32_t sample_interval_real_us = 0;
 const struct device *i2c_dev;
+static bool device_init_correctly = false;
 
 /**
  * @brief      Setup I2C config and accelerometer convert value
@@ -91,11 +81,6 @@ bool ei_inertial_init(void)
     {
         ei_printf("No device I2C found; did initialization fail?\n");
         return false;
-    }
-    else
-    {
-        //i2c_configure(i2c_dev, I2C_SPEED_SET(I2C_SPEED_STANDARD));
-        ei_printf("I2C Init OK\n");
     }
 
     dev_ctx.write_reg = platform_write;
@@ -128,16 +113,20 @@ bool ei_inertial_init(void)
 	}
 
     ei_printf("Sensor " ACCEL_DEVICE_LABEL " init OK\n");
+    device_init_correctly = true;
 
     return true;
 }
 
 /**
  * @brief      Get data from sensor, convert and call callback to handle
+ *
+ * @return     0 on success, non-zero on error
  */
-void ei_inertial_read_data(void)
+int ei_inertial_read_data(void)
 {
     uint8_t reg;
+    int ret_val = 0;
 
     if(i2c_dev){
         iis2dlpc_flag_data_ready_get(&dev_ctx, &reg);
@@ -165,7 +154,10 @@ void ei_inertial_read_data(void)
         acceleration_g[2] = 0.0f;
         EiDevice.delay_ms((uint32_t)(sample_interval_real_us / 1000));
         cb_sampler((const void *)&acceleration_g[0], SIZEOF_N_AXIS_SAMPLED);
+        ret_val = -1;
     }
+
+    return ret_val;
 }
 
 /**
@@ -178,12 +170,18 @@ void ei_inertial_read_data(void)
  */
 bool ei_inertial_sample_start(sampler_callback callsampler, float sample_interval_ms)
 {
+    if(device_init_correctly == false) {
+        ei_printf("\r\nERR: Failed to get data, is your accelerometer connected?\r\n");
+        EiDevice.set_state(eiStateFinished);
+        return false;
+    }
+
     cb_sampler = callsampler;
 
     sample_interval_real_us = int32_t(sample_interval_ms * 1000);
     sample_interval_real_us = sample_interval_real_us - (FLASH_WRITE_TIME_US + ACC_SAMPLE_TIME_US + CORRECTION_TIME_US);
 
-    ei_printf("sample_interval_real_us = %d us\n", sample_interval_real_us);
+    // ei_printf("sample_interval_real_us = %d us\n", sample_interval_real_us);
 
     EiDevice.set_state(eiStateSampling);
 

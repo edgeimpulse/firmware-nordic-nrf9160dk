@@ -21,22 +21,12 @@ typedef enum
 #define MX25R_RETRY                         (10000)/**!< Number of retries for SPI Flash */
 
 /* Flash device label, that is fetched from device tree */
-#if ((CONFIG_SOC_NRF52840 == 1) ||       \
-     (CONFIG_SOC_NRF52840_QIAA == 1) ||  \
-     (CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-     (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-#define EXTERNAL_FLASH_DEVICE               DT_LABEL(DT_INST(0, nordic_qspi_nor))           /*< configured in device tree of the board >*/
-#define EXTERNAL_FLASH_DEVICE_SIZE          DT_PROP(DT_INST(0, nordic_qspi_nor), size)      /*< configured in device tree of the board >*/
-#define EXTERNAL_FLASH_DEVICE_SECTOR_SIZE   CONFIG_NORDIC_QSPI_NOR_FLASH_LAYOUT_PAGE_SIZE   /*< configured in prj.conf of the board >*/
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
 #define EXTERNAL_FLASH_DEVICE               DT_LABEL(DT_INST(0, jedec_spi_nor))           /*< configured in device tree of the board >*/
 #define EXTERNAL_FLASH_DEVICE_SIZE          DT_PROP(DT_INST(0, jedec_spi_nor), size)      /*< configured in device tree of the board >*/
 #define EXTERNAL_FLASH_DEVICE_SECTOR_SIZE   CONFIG_SPI_NOR_FLASH_LAYOUT_PAGE_SIZE           /*< configured in prj.conf of the board >*/
-#endif
 #define ZEPHYR_FLASH_SECTOR_SIZE            (EXTERNAL_FLASH_DEVICE_SECTOR_SIZE)             /*< page size of external flash >*/
 #define EI_DATA_SAMPLES_OFFSET              (EXTERNAL_FLASH_DEVICE_SECTOR_SIZE*16)          /*< Offset for stored samples >*/
-#define ZEPHYR_TOTAL_FLASH_SIZE	            EXTERNAL_FLASH_DEVICE_SIZE                      /*< On board Flash size >*/
+#define ZEPHYR_TOTAL_FLASH_SIZE	            ((EXTERNAL_FLASH_DEVICE_SIZE)/8)                /*< On board Flash size, size in DT is in bits >*/
 
 /* Prototypes -------------------------------------------------------------- */
 int ei_zephyr_flash_load_config(uint32_t *config, uint32_t config_size);

@@ -26,25 +26,6 @@
 #include <stdint.h>
 #include "ei_config_types.h"
 
-#define EDGE_IMPULSE_MAX_FREQUENCIES        5
-
-
-
-// Available sensors to sample from on this board
-typedef struct {
-    // Name (e.g. 'Built-in accelerometer')
-    const char *name;
-    // Frequency list
-    float frequencies[EDGE_IMPULSE_MAX_FREQUENCIES];
-    // Max. sample length in seconds (could be depending on the size of the flash chip)
-    uint16_t max_sample_length_s;
-    // Start sampling, this function should be blocking and is called when sampling commences
-// #ifdef __MBED__
-//     Callback<bool()> start_sampling_cb;
-// #else
-    bool (*start_sampling_cb)();
-//#endif
-} ei_sensor_t;
 
 // Configuration should be writable and readable, so let's declare some pointers for that
 typedef struct {
@@ -63,6 +44,10 @@ typedef struct {
     // copy the ID into the provided buffer, and set the out_size
     // return 0 if OK, or other value if device does not have an ID
     int (*get_device_id)(uint8_t out_buffer[32], size_t *out_size);
+
+    // Set unique device identifier
+    // return 0 if OK, or other value if device cannot set an ID
+    int (*set_device_id)(char *device_id);
 
     // Get device type
     // copy the type into the provided buffer, and set the out_size
@@ -128,6 +113,15 @@ typedef struct {
 
     // Get the last error from the remote management interface (if applicable)
     bool (*mgmt_get_last_error)(char *error, size_t error_size);
+
+    // Take a snapshot
+    bool (*take_snapshot)(size_t width, size_t height, bool use_max_baudrate);
+
+    // Start a snapshot stream
+    bool (*start_snapshot_stream)(size_t width, size_t height, bool use_max_baudrate);
+
+    // Get Data Output Baudrate
+    int (*get_data_output_baudrate)(ei_device_data_output_baudrate_t *baudrate);
 
 } ei_config_ctx_t;
 
@@ -256,6 +250,34 @@ EI_CONFIG_ERROR ei_config_get_device_id(uint8_t out_buffer[32], size_t *out_size
     if (ei_config_ctx == NULL) return EI_CONFIG_NO_CONTEXT;
 
     int v = ei_config_ctx->get_device_id(out_buffer, out_size);
+    if (v != 0) {
+        return EI_CONFIG_CONTEXT_ERROR;
+    }
+    return EI_CONFIG_OK;
+}
+
+/**
+ * Set unique device identifier
+ */
+EI_CONFIG_ERROR ei_config_set_device_id(char *device_id) {
+    if (ei_config_ctx == NULL) return EI_CONFIG_NO_CONTEXT;
+    if (ei_config_ctx->set_device_id == NULL) return EI_CONFIG_NOT_IMPLEMENTED;
+
+    int v = ei_config_ctx->set_device_id(device_id);
+    if (v != 0) {
+        return EI_CONFIG_CONTEXT_ERROR;
+    }
+    return EI_CONFIG_OK;
+}
+
+/**
+ * Get Data Output Baudrate
+ */
+EI_CONFIG_ERROR ei_config_get_data_output_baudrate(ei_device_data_output_baudrate_t *baudrate) {
+    if (ei_config_ctx == NULL) return EI_CONFIG_NO_CONTEXT;
+    if (ei_config_ctx->get_data_output_baudrate == NULL) return EI_CONFIG_NOT_IMPLEMENTED;
+
+    int v = ei_config_ctx->get_data_output_baudrate(baudrate);
     if (v != 0) {
         return EI_CONFIG_CONTEXT_ERROR;
     }

@@ -27,8 +27,10 @@ void ei_init(void)
         ei_printf("Inerial sensor communication error occured\r\n");
     }
 
-    // /* Setup the microphone sensor */
-    ei_microphone_init();
+    /* Setup the microphone sensor */
+    if(ei_microphone_init() == false) {
+        ei_printf("Microphone intitialization failed\r\n");
+    }
 
     /* Intialize configuration */
     static ei_config_ctx_t config_ctx = { 0 };

@@ -23,20 +23,15 @@
 /* Include ----------------------------------------------------------------- */
 #include "ei_device_nordic_nrf91.h"
 #include "ei_zephyr_flash_commands.h"
+#include "edge-impulse-sdk/dsp/ei_utils.h"
 #include "ei_microphone.h"
 #include "ei_inertialsensor.h"
 #include "repl.h"
-
 #include <cstdarg>
 #include "math.h"
-
 #include <sys/printk.h>
 #include <drivers/uart.h>
-
-#if ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
 #include <modem/modem_info.h>
-#endif
 
 extern "C" void ei_led_state_control(void);
 
@@ -62,22 +57,17 @@ typedef enum
 
 }used_sensors_t;
 
+/** Data Output Baudrate */
+const ei_device_data_output_baudrate_t ei_dev_max_data_output_baudrate = {
+    xstr(MAX_BAUD),
+    MAX_BAUD,
+};
+
 #define EDGE_STRINGIZE_(x) #x
 #define EDGE_STRINGIZE(x) EDGE_STRINGIZE_(x)
 
 /** Device type */
-#if ((CONFIG_SOC_NRF52840 == 1) || \
-       (CONFIG_SOC_NRF52840_QIAA == 1))
-static const char *ei_device_type = "NRF52840_DK  ";
-#elif ((CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-       (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-static const char *ei_device_type = "NRF5340_DK   ";
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
 static const char *ei_device_type = "NRF9160_DK   ";
-#else 
-#error "Unsupported build target was chosen!"
-#endif
 
 
 /** Device id array */
@@ -85,7 +75,6 @@ static char ei_device_id[DEVICE_ID_MAX_SIZE];
 
 /** Device object, for this class only 1 object should exist */
 EiDeviceNRF91 EiDevice;
-
 static tEiState ei_program_state = eiStateIdle;
 
 /* Private function declarations ------------------------------------------- */
@@ -94,7 +83,15 @@ static int get_type_c(uint8_t out_buffer[32], size_t *out_size);
 static bool get_wifi_connection_status_c(void);
 static bool get_wifi_present_status_c(void);
 static bool read_sample_buffer(size_t begin, size_t length, void(*data_fn)(uint8_t*, size_t));
+static void zephyr_timer_handler(struct k_timer *dummy);
+static void led_work_handler(struct k_work *work);
+static int get_data_output_baudrate_c(ei_device_data_output_baudrate_t *baudrate);
+void set_max_data_output_baudrate_c(void);
+void set_default_data_output_baudrate_c(void);
 
+/** Timer for LED control*/
+K_TIMER_DEFINE(led_timer, zephyr_timer_handler, NULL);
+K_WORK_DEFINE(led_work, led_work_handler);
 /* Public functions -------------------------------------------------------- */
 
 EiDeviceNRF91::EiDeviceNRF91(void)
@@ -102,6 +99,12 @@ EiDeviceNRF91::EiDeviceNRF91(void)
     /* init device name to null only, it means it is not initialized so we have
     to do that on first access */
     memset(ei_device_id, 0, DEVICE_ID_MAX_SIZE);
+
+    for(int i = 0; i < EI_DEVICE_N_SENSORS; i++) {
+        for(int y = 0; y < EI_MAX_FREQUENCIES; y++) {
+            sensors[i].frequencies[y] = 0.f;
+        }
+    }
 }
 
 /**
@@ -198,6 +201,9 @@ bool EiDeviceNRF91::get_sensor_list(const ei_device_sensor_t **sensor_list, size
     sensors[MICROPHONE].start_sampling_cb = &ei_microphone_sample_start;
     sensors[MICROPHONE].max_sample_length_s = available_bytes / (16000 * 2);
     sensors[MICROPHONE].frequencies[0] = 16000.0f;
+    sensors[MICROPHONE].frequencies[1] = 8000.0f;
+    sensors[MICROPHONE].frequencies[2] = 4000.0f;
+
 
     *sensor_list      = sensors;
     *sensor_list_size = EI_DEVICE_N_SENSORS;
@@ -244,6 +250,36 @@ void EiDeviceNRF91::set_state(tEiState state)
 
         ei_program_state = eiStateIdle;
     }
+}
+
+/**
+ * @brief      Get the data output baudrate
+ *
+ * @param      baudrate    Baudrate used to output data
+ *
+ * @return     0
+ */
+int EiDeviceNRF91::get_data_output_baudrate(ei_device_data_output_baudrate_t *baudrate)
+{
+    return get_data_output_baudrate_c(baudrate);
+}
+
+/**
+ * @brief      Set output baudrate to max
+ *
+ */
+void EiDeviceNRF91::set_max_data_output_baudrate()
+{
+    set_max_data_output_baudrate_c();
+}
+
+/**
+ * @brief      Set output baudrate to default
+ *
+ */
+void EiDeviceNRF91::set_default_data_output_baudrate()
+{
+    set_default_data_output_baudrate_c();
 }
 
 /**
@@ -394,6 +430,7 @@ bool ei_user_invoke_stop(void)
     while(data != 0xFF) {
         if(data == 'b') {
             stop_found = true;
+            EiDevice.set_state(eiStateFinished);
             break;
         }
         data = uart_getchar();
@@ -468,6 +505,55 @@ static bool get_wifi_present_status_c(void)
     return false;
 }
 
+static int get_data_output_baudrate_c(ei_device_data_output_baudrate_t *baudrate)
+{
+    size_t length = strlen(ei_dev_max_data_output_baudrate.str);
+
+    if (length < 32)
+    {
+        memcpy(baudrate, &ei_dev_max_data_output_baudrate, sizeof(ei_device_data_output_baudrate_t));
+        return 0;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+void set_max_data_output_baudrate_c(void)
+{
+    int ret;
+    struct uart_config cfg;
+
+    if(uart_config_get(uart, &cfg)) {
+        ei_printf("ERR: can't get UART config!\n");
+    }
+
+    cfg.baudrate = MAX_BAUD;
+
+    if(uart_configure(uart, &cfg)) {
+        ei_printf("ERR: can't set UART config!\n");
+    }
+}
+
+void set_default_data_output_baudrate_c(void)
+{
+    int ret;
+    struct uart_config cfg;
+
+    if (uart_config_get(uart, &cfg))
+    {
+        ei_printf("ERR: can't get UART config!\n");
+    }
+
+    cfg.baudrate = DEFAULT_BAUD;
+
+    if (uart_configure(uart, &cfg))
+    {
+        ei_printf("ERR: can't set UART config!\n");
+    }
+}
+
 /**
  * @brief      Read samples from sample memory and send to data_fn function
  *
@@ -536,6 +622,30 @@ void ei_led_state_control(void)
 }
 
 /**
+ * @brief      System workqueue handler to perform work that can't be done in interrupt level
+ *
+ * @param      dummy  The dummy
+ */
+static void led_work_handler(struct k_work *work)
+{
+    ei_led_state_control();
+}
+
+/**
+ * @brief      Peridioc (200ms) handler for the LED's
+ *
+ * @param      dummy  The dummy
+ */
+static void zephyr_timer_handler(struct k_timer *dummy)
+{
+    /* as LEDs are controlled through I2C expander
+    we can't control them from timer handler which is run on interrupt level.
+    To perform such an operationm pass the work to system workqueue which is
+    ran on the mian thread level */
+    k_work_submit(&led_work);
+}
+
+/**
  * @brief      Sets development kit LEDs on and off
  *
  * @param[in]  led1     set LED1 on and off (true/false)
@@ -596,6 +706,10 @@ int BOARD_ledInit(void)
     {
         return EIO;
     }
+
+    /* start periodic timer that expires once every 200 ms */
+    k_timer_start(&led_timer, K_MSEC(200), K_MSEC(200));
+
     return ret;
 }
 
@@ -669,42 +783,6 @@ int str2int(const char* str, int len)
  */
 int id_init(void) 
 {
-    
-#if ((CONFIG_SOC_NRF52840 == 1) || \
-     (CONFIG_SOC_NRF52840_QIAA == 1))
-    /* Read nordic id from the registers */
-    uint32_t id_msb = (uint32_t)NRF_FICR->DEVICEID[1];
-    uint32_t id_lsb = (uint32_t)NRF_FICR->DEVICEID[0];
-
-     /* Setup device ID */
-    snprintf(&ei_device_id[0], DEVICE_ID_MAX_SIZE,
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             (unsigned int)((id_msb >> 8) & 0xFF),
-             (unsigned int)((id_msb >> 0) & 0xFF),
-             (unsigned int)((id_lsb >> 24) & 0xFF),
-             (unsigned int)((id_lsb >> 16) & 0xFF),
-             (unsigned int)((id_lsb >> 8) & 0xFF),
-             (unsigned int)((id_lsb >> 0) & 0xFF));
-
-
-#elif ((CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-       (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-    /* Read nordic id from the registers */
-    uint32_t id_msb = (uint32_t)NRF_FICR->INFO.DEVICEID[1];
-    uint32_t id_lsb = (uint32_t)NRF_FICR->INFO.DEVICEID[0];
-
-     /* Setup device ID */
-    snprintf(&ei_device_id[0], DEVICE_ID_MAX_SIZE,
-             "%02X:%02X:%02X:%02X:%02X:%02X",
-             (unsigned int)((id_msb >> 8) & 0xFF),
-             (unsigned int)((id_msb >> 0) & 0xFF),
-             (unsigned int)((id_lsb >> 24) & 0xFF),
-             (unsigned int)((id_lsb >> 16) & 0xFF),
-             (unsigned int)((id_lsb >> 8) & 0xFF),
-             (unsigned int)((id_lsb >> 0) & 0xFF));
-
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
     /* Read IMEI from modem since ID registers are not accessible from non-secure */
     int err = modem_info_init();
     if(err)
@@ -727,10 +805,6 @@ int id_init(void)
              str2int(&id[8 + 4], 1),
              str2int(&id[8 + 5], 1),
              str2int(&id[8 + 6], 1));
-
-#else
-#error "Unsupported build target was chosen!"
-#endif
 
     return 0;
 }

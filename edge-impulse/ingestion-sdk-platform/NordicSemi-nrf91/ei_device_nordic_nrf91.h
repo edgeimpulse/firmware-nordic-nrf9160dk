@@ -32,6 +32,9 @@
 
 #include <cstdio>
 
+#define DEFAULT_BAUD 115200
+#define MAX_BAUD 115200 // 921600 bps is not supported due to too high error rate (>2%)
+
 /* The devicetree node identifier for the "led0" alias. */
 #define LED0_NODE DT_ALIAS(led0)
 #define LED1_NODE DT_ALIAS(led1)
@@ -60,7 +63,7 @@
 #define PIN_LED2	0
 #define FLAGS_LED2	0
 #define PIN_LED3	0
-#define FLAGS_LED4	0
+#define FLAGS_LED3	0
 #endif
 
 //#define ei_printf(...) printf(__VA_ARGS__)
@@ -68,6 +71,7 @@ extern void ei_printf(const char *format, ...);
 
 /** Number of sensors used */
 #define EI_DEVICE_N_SENSORS		2
+#define EI_MAX_FREQUENCIES      5
 
 /** EI ingestion and inferencing state */
 typedef enum
@@ -109,6 +113,9 @@ public:
 	void delay_ms(uint32_t milliseconds);
 	uint64_t get_ms(void);
 	void set_state(tEiState state);
+	int get_data_output_baudrate(ei_device_data_output_baudrate_t *baudrate);
+	void set_default_data_output_baudrate() override;
+	void set_max_data_output_baudrate() override;
 
 	c_callback get_id_function(void);
 	c_callback get_type_function(void);

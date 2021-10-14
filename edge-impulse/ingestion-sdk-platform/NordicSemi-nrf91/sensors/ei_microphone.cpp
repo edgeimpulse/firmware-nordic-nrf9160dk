@@ -34,25 +34,12 @@
 #include <string.h>
 
 /* Read nordic id from the registers */
-#if ((CONFIG_SOC_NRF52840 == 1) || \
-     (CONFIG_SOC_NRF52840_QIAA == 1))
-#define PDM_CLK_PIN                         36// 32+4 = p1.04
-#define PDM_DIN_PIN                         37// 32+5 = p1.05
-#elif ((CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-       (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-#define PDM_CLK_PIN                         37// 32+5 = p1.05
-#define PDM_DIN_PIN                         38// 32+6 = p1.06
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
-#define PDM_CLK_PIN                         3// 32+5 = p1.05
-#define PDM_DIN_PIN                         4// 32+6 = p1.06
-#else 
-#error "Unsupported build target was chosen!"
-#endif
+#define PDM_CLK_PIN                         3
+#define PDM_DIN_PIN                         4
 
 /* Audio sampling config */
-#define AUDIO_SAMPLING_FREQUENCY            16000
-#define AUDIO_SAMPLES_PER_MS                (AUDIO_SAMPLING_FREQUENCY / 1000)
+#define DEFAULT_AUDIO_SAMPLING_FREQ         16000
+#define AUDIO_SAMPLES_PER_MS                (DEFAULT_AUDIO_SAMPLING_FREQ / 1000)
 #define AUDIO_DSP_SAMPLE_LENGTH_MS          16
 #define AUDIO_DSP_SAMPLE_RESOLUTION         (sizeof(short))
 #define AUDIO_DSP_SAMPLE_BUFFER_SIZE        (AUDIO_SAMPLES_PER_MS * AUDIO_DSP_SAMPLE_LENGTH_MS * AUDIO_DSP_SAMPLE_RESOLUTION) //4096
@@ -89,8 +76,10 @@ static bool record_ready = false;
 static uint32_t headerOffset;
 static uint32_t samples_required;
 static uint32_t current_sample;
+static uint32_t audio_sampling_frequency = DEFAULT_AUDIO_SAMPLING_FREQ;
 
 static inference_t inference;
+static int16_t max_audio_lvl = 0;
 
 static unsigned char ei_mic_ctx_buffer[1024];
 static sensor_aq_signing_ctx_t ei_mic_signing_ctx;
@@ -150,6 +139,27 @@ static void audio_buffer_inference_callback(void *buffer, uint32_t n_bytes)
 }
 
 /**
+ * @brief Get the max diff value from the sample buffer
+ * @param buffer Pointer to source buffer
+ * @param n_bytes Number of bytes in buffer
+ */
+static void audio_sanity_check_callback(void *buffer, uint32_t n_bytes)
+{
+    int16_t *samples = (int16_t *)buffer;
+    int16_t prev_sample = samples[0];
+
+    for(uint32_t i = 1; i < (n_bytes >> 1); i++) {
+
+        int16_t diff_sample = abs(prev_sample - samples[i]);
+        if(max_audio_lvl < diff_sample) {
+            max_audio_lvl = diff_sample;
+        }
+        prev_sample = samples[i];
+    }
+    record_ready = false;
+}
+
+/**
  * @brief      PDM receive data handler
  * @param[in]  p_evt  pdm event structure
  */
@@ -167,12 +177,39 @@ static void pdm_data_handler(nrfx_pdm_evt_t const * p_evt)
         buf_toggle ^= 1;
         err = nrfx_pdm_buffer_set(pdm_buffer_temp[buf_toggle], AUDIO_DSP_SAMPLE_BUFFER_SIZE);
         if(err != NRFX_SUCCESS){
-            printk("PDM buffer init error: %d\n", err);
+            ei_printf("PDM buffer init error: %d\n", err);
         }
     }
     if(p_evt->buffer_released != NULL){
             write_data = true;
             current_buff = pdm_buffer_temp[buf_toggle];
+    }
+}
+
+/**
+ * @brief      PDM receive data handler
+ * @param[in]  p_evt  pdm event structure
+ */
+static void pdm_inference_data_handler(nrfx_pdm_evt_t const * p_evt)
+{
+    nrfx_err_t err = NRFX_SUCCESS;
+    static uint8_t buf_toggle = 0;
+
+    if(p_evt->error != 0){
+        ei_printf("PDM handler error ocured\n");
+        ei_printf("pdm_data_handler error: %d, %d  \n", p_evt->error, p_evt->buffer_requested);
+        return;
+    }
+    if(true == p_evt->buffer_requested){
+        buf_toggle ^= 1;
+        err = nrfx_pdm_buffer_set(pdm_buffer_temp[buf_toggle], AUDIO_DSP_SAMPLE_BUFFER_SIZE);
+        if(err != NRFX_SUCCESS){
+            ei_printf("PDM buffer init error: %d\n", err);
+        }
+    }
+    if(p_evt->buffer_released != NULL){
+        current_buff = pdm_buffer_temp[buf_toggle];
+        audio_buffer_inference_callback(&pdm_buffer_temp[buf_toggle], sizeof(pdm_buffer_temp)/2);
     }
 }
 
@@ -185,8 +222,8 @@ static void pdm_data_handler(nrfx_pdm_evt_t const * p_evt)
 static void get_dsp_data(void (*callback)(void *buffer, uint32_t n_bytes))
 {
     //TODO: check the number of bytes
-    if(write_data ==true){
-            callback((void *)current_buff, sizeof(pdm_buffer_temp)/2);
+    if(write_data == true){
+        callback((void *)current_buff, sizeof(pdm_buffer_temp)/2);
         write_data = false;
     }
 }
@@ -235,7 +272,7 @@ static bool create_header(void)
     sensor_aq_payload_info payload = {
         EiDevice.get_id_pointer(),
         EiDevice.get_type_pointer(),
-        1000.0f / static_cast<float>(AUDIO_SAMPLING_FREQUENCY),
+        1000.0f / static_cast<float>(audio_sampling_frequency),
         { { "audio", "wav" } }
     };
 
@@ -286,45 +323,89 @@ static bool create_header(void)
     return true;
 }
 
+/**
+ * @brief Get a full sample buffer and run sanity check
+ * @return true microphone is working
+ * @return false stops audio and return
+ */
+static bool do_sanity_check(void)
+{
+    max_audio_lvl = 0;
+    record_ready = true;
+    write_data = false;
 
-/* Public functions -------------------------------------------------------- */
+    while (record_ready == true) {
+        get_dsp_data(&audio_sanity_check_callback);
+    }
+
+    if(max_audio_lvl < 10) {
+        ei_printf("\r\nERR: No audio recorded, is the microphone connected?\r\n");
+        nrfx_pdm_stop();
+        EiDevice.set_state(eiStateFinished);
+        return false;
+    }
+    else {
+        return true;
+    }
+}
 
 /**
- * @brief      Set the PDM mic to +34dB
+ * @brief PDM clock frequency calculation based on 32MHz clock and
+ * decimation filter ratio 80
+ * @details For more info on clock generation:
+ * https://infocenter.nordicsemi.com/index.jsp?topic=%2Fps_nrf5340%2Fpdm.html
+ * @param sampleRate in Hz
+ * @return uint32_t clk value
  */
-void ei_microphone_init(void)
+static uint32_t pdm_clock_calculate(uint64_t sampleRate)
+{
+    const uint64_t PDM_RATIO = 80ULL;
+    const uint64_t CLK_32MHZ = 32000000ULL;
+    uint64_t clk_control = 4096ULL * (((sampleRate * PDM_RATIO) * 1048576ULL) / (CLK_32MHZ + ((sampleRate * PDM_RATIO) / 2ULL)));
+
+    return (uint32_t)clk_control;
+}
+
+/**
+ * @brief Set the up nrf pdm object, call pdm init
+ *
+ * @param event_handler
+ * @param sample_rate in Hz
+ * @return false on error
+ */
+static bool setup_nrf_pdm(nrfx_pdm_event_handler_t  event_handler, uint32_t sample_rate)
 {
     nrfx_err_t err;
 
     /* PDM driver configuration */
     nrfx_pdm_config_t config_pdm = NRFX_PDM_DEFAULT_CONFIG(PDM_CLK_PIN, PDM_DIN_PIN);
-    config_pdm.clock_freq = NRF_PDM_FREQ_1280K;
+    config_pdm.clock_freq = (nrf_pdm_freq_t)pdm_clock_calculate(sample_rate);
     config_pdm.ratio = NRF_PDM_RATIO_80X;
     config_pdm.edge = NRF_PDM_EDGE_LEFTRISING;
     config_pdm.gain_l = NRF_PDM_GAIN_MAXIMUM;
     config_pdm.gain_r = NRF_PDM_GAIN_MAXIMUM;
 
     /* PDM interrupt configuration necessary for Zephyr */
-#if ((CONFIG_SOC_NRF52840 == 1) || \
-       (CONFIG_SOC_NRF52840_QIAA == 1))
     IRQ_DIRECT_CONNECT(PDM_IRQn, 6, nrfx_pdm_irq_handler, 0);
-#elif ((CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-       (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-    IRQ_DIRECT_CONNECT(PDM0_IRQn, 6, nrfx_pdm_irq_handler, 0);
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-    (CONFIG_SOC_NRF9160_SICA == 1))
-    IRQ_DIRECT_CONNECT(PDM_IRQn, 6, nrfx_pdm_irq_handler, 0);
-#else 
-#error "Unsupported build target was chosen!"
-#endif
 
-    err = nrfx_pdm_init(&config_pdm, pdm_data_handler);
+    err = nrfx_pdm_init(&config_pdm, event_handler);
     if(err != NRFX_SUCCESS){
-        ei_printf("PDM init error: %d\n", err);
+        return false;
     }
     else{
-        ei_printf("PDM init OK\n");
+        return true;
     }
+}
+
+/* Public functions -------------------------------------------------------- */
+
+/**
+ * @brief      Set the PDM mic to +34dB
+ * @return     false on error
+ */
+bool ei_microphone_init(void)
+{
+    return setup_nrf_pdm(pdm_data_handler, audio_sampling_frequency);
 }
 
 bool ei_microphone_record(uint32_t sample_length_ms, uint32_t start_delay_ms, bool print_start_messages)
@@ -338,6 +419,10 @@ bool ei_microphone_record(uint32_t sample_length_ms, uint32_t start_delay_ms, bo
                   start_delay_ms);
     }
 
+    nrfx_pdm_uninit();
+    if(!setup_nrf_pdm(pdm_data_handler, audio_sampling_frequency)) {
+        return false;
+    }
     err = nrfx_pdm_start();
     if(err != NRFX_SUCCESS){
         return false;
@@ -351,7 +436,12 @@ bool ei_microphone_record(uint32_t sample_length_ms, uint32_t start_delay_ms, bo
     /* Erase necessary flash size for new data */
     if (ei_zephyr_flash_erase_sampledata(0, (samples_required << 1) +
         ei_zephyr_flash_get_block_size()) != ZEPHYR_FLASH_CMD_OK) {
-        nrfx_pdm_start();;
+        nrfx_pdm_stop();
+        return false;
+    }
+
+    /* Since we have no feedback from the PDM sensor, do a sanity check on the data stream */
+    if(do_sanity_check() == false) {
         return false;
     }
 
@@ -364,9 +454,28 @@ bool ei_microphone_record(uint32_t sample_length_ms, uint32_t start_delay_ms, bo
     return true;
 }
 
-bool ei_microphone_inference_start(uint32_t n_samples)
+bool ei_microphone_inference_start(uint32_t n_samples, float interval_ms)
 {
     nrfx_err_t err;
+
+ /* Calclate sample rate from sample interval */
+    audio_sampling_frequency = (uint32_t)(1000.f / interval_ms);
+
+    nrfx_pdm_uninit();
+    if(!setup_nrf_pdm(pdm_data_handler, audio_sampling_frequency)) {
+        return false;
+    }
+    err = nrfx_pdm_start();
+    if(err != NRFX_SUCCESS){
+        return false;
+    }
+
+    EiDevice.delay_ms(1000);
+    /* Since we have no feedback from the PDM sensor, do a sanity check on the data stream */
+    if(do_sanity_check() == false) {
+        return false;
+    }
+    nrfx_pdm_stop();
 
     inference.buffers[0] = (int16_t *)malloc(n_samples * sizeof(int16_t));
 
@@ -386,6 +495,10 @@ bool ei_microphone_inference_start(uint32_t n_samples)
     inference.n_samples  = n_samples;
     inference.buf_ready  = 0;
 
+    nrfx_pdm_uninit();
+    if(!setup_nrf_pdm(pdm_inference_data_handler, audio_sampling_frequency)) {
+        return false;
+    }
     err = nrfx_pdm_start();
     if(err != NRFX_SUCCESS){
         return false;
@@ -396,13 +509,21 @@ bool ei_microphone_inference_start(uint32_t n_samples)
 
 bool ei_microphone_inference_record(void)
 {
+    bool ret = true;
+
+    if (inference.buf_ready == 1) {
+        ei_printf(
+            "Error sample buffer overrun. Decrease the number of slices per model window "
+            "(EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW)\n");
+        ret = false;
+    }
+
     while (inference.buf_ready == 0) {
-        get_dsp_data(&audio_buffer_inference_callback);
     };
  
     inference.buf_ready = 0;
 
-    return true;
+    return ret;
 }
 
 /**
@@ -466,6 +587,8 @@ bool ei_microphone_sample_start(void)
     }
     ei_printf("\tFile name: %s\n", filename);
 
+    /* Calclate sample rate from sample interval */
+    audio_sampling_frequency = (uint32_t)(1000.f / ei_config_get_config()->sample_interval_ms);
 
     samples_required = (uint32_t)(((float)ei_config_get_config()->sample_length_ms) / ei_config_get_config()->sample_interval_ms);
 

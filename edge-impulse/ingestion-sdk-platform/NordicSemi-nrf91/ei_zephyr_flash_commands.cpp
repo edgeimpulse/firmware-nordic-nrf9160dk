@@ -12,16 +12,7 @@
 #define MICRO_SD                1
 #define RAM                     2
 
-#if ((CONFIG_SOC_NRF52840 == 1) ||       \
-     (CONFIG_SOC_NRF52840_QIAA == 1) ||  \
-     (CONFIG_SOC_NRF5340_CPUAPP == 1) || \
-     (CONFIG_SOC_NRF5340_CPUAPP_QKAA == 1))
-#define RAM_SAMPLE_BLOK         20
-#elif ((CONFIG_SOC_NRF9160 == 1) || \
-       (CONFIG_SOC_NRF9160_SICA == 1))
 #define RAM_SAMPLE_BLOK         9
-#endif
-
 #define RAM_SAMPLE_BLOK_SIZE    4096
 
 #define SAMPLE_MEMORY           SERIAL_FLASH
