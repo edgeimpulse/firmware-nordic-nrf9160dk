@@ -2,7 +2,7 @@
 
 #include "ei_device_nordic_nrf91.h"
 #include "ei_zephyr_flash_commands.h"
-#include "ei_classifier_porting.h"
+#include "edge-impulse-sdk/porting/ei_classifier_porting.h"
 #include "ei_main.h"
 #include "ei_run_impulse.h"
 #include "../../repl/at_cmds.h"
@@ -36,7 +36,7 @@ void ei_init(void)
     static ei_config_ctx_t config_ctx = { 0 };
     config_ctx.get_device_id = EiDevice.get_id_function();
     config_ctx.get_device_type = EiDevice.get_type_function();
-    config_ctx.wifi_connection_status = EiDevice.get_wifi_connection_status_function(); 
+    config_ctx.wifi_connection_status = EiDevice.get_wifi_connection_status_function();
     config_ctx.wifi_present = EiDevice.get_wifi_present_status_function();
     config_ctx.load_config = &ei_zephyr_flash_load_config;
     config_ctx.save_config = &ei_zephyr_flash_save_config;

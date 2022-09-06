@@ -24,7 +24,7 @@
 #include "ei_microphone.h"
 #include "ei_zephyr_flash_commands.h"
 #include "ei_device_nordic_nrf91.h"
-#include "ei_classifier_porting.h"
+#include "edge-impulse-sdk/porting/ei_classifier_porting.h"
 
 #include "ei_config_types.h"
 #include "sensor_aq_mbedtls_hs256.h"
@@ -411,7 +411,7 @@ bool ei_microphone_init(void)
 bool ei_microphone_record(uint32_t sample_length_ms, uint32_t start_delay_ms, bool print_start_messages)
 {
     nrfx_err_t err;
-    
+
     EiDevice.set_state(eiStateErasingFlash);
 
     if (print_start_messages) {
@@ -520,7 +520,7 @@ bool ei_microphone_inference_record(void)
 
     while (inference.buf_ready == 0) {
     };
- 
+
     inference.buf_ready = 0;
 
     return ret;

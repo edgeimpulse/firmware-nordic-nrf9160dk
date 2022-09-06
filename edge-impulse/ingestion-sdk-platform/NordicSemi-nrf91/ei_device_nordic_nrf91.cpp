@@ -59,7 +59,7 @@ typedef enum
 
 /** Data Output Baudrate */
 const ei_device_data_output_baudrate_t ei_dev_max_data_output_baudrate = {
-    xstr(MAX_BAUD),
+    ei_xstr(MAX_BAUD),
     MAX_BAUD,
 };
 
