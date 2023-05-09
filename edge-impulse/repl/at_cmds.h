@@ -36,7 +36,7 @@
 
 
 #define EDGE_IMPULSE_AT_COMMAND_VERSION        "1.6.0" // not a complete set (missing snapshot related commands)
-#define ei_putc(c) uart_putchar(c)
+#define ei_putchar(c) uart_putchar(c)
 
 static void at_error_not_implemented() {
     ei_printf("Command not implemented\r\n");
