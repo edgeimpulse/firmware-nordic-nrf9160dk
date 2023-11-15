@@ -1,0 +1,29 @@
+#
+# Copyright (c) 2023 EdgeImpulse Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+
+config REMOTE_INGESTION
+    bool "Enable remote ingestion"
+    default n
+    help
+      Enable remote ingestion of data to Edge Impulse. This will send data to
+      Edge Impulse over a LTE connection. If you disable this, you can still
+      use the serial connection and Edge Impulse Serial Daemon to send data.
+
+if REMOTE_INGESTION
+
+module = REMOTE_INGESTION
+module-str = Remote Ingestion
+source "subsys/logging/Kconfig.template.log_config"
+
+endif
+
+module = EI
+module-str = Edge Impulse Firmware
+source "subsys/logging/Kconfig.template.log_config"
+
+menu "Zephyr Kernel"
+source "Kconfig.zephyr"
+endmenu

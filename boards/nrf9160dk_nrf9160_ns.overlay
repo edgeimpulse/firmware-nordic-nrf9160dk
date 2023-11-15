@@ -1,34 +1,77 @@
 /*
- * Copyright (c) 2020, Nordic Semiconductor ASA
+ * Copyright (c) 2023 EdgeImpulse Inc.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
 
-&i2c2 {
-    clock-frequency = <I2C_BITRATE_FAST>;
-};
+/ {
+	aliases {
+		ext-flash = &mx25r64;
+	};
 
-/* max. frequency lower due to level shifters max. frequency on the X-NUCLEO-IKA02A1 */
-&mx25r64 {
-    spi-max-frequency = <4000000>;
+	/* Configure partition manager to use mx25r64 as the external flash */
+	chosen {
+		nordic,pm-ext-flash = &mx25r64;
+	};
 };
 
 &pcal6408a {
-    status = "okay";
+	status = "okay";
 };
 
 &led0 {
-    gpios = <&pcal6408a 4 GPIO_ACTIVE_HIGH>;
+	gpios = <&pcal6408a 4 GPIO_ACTIVE_HIGH>;
 };
 
 &led1 {
-    gpios = <&pcal6408a 5 GPIO_ACTIVE_HIGH>;
+	gpios = <&pcal6408a 5 GPIO_ACTIVE_HIGH>;
 };
 
 &led2 {
-    gpios = <&pcal6408a 6 GPIO_ACTIVE_HIGH>;
+	gpios = <&pcal6408a 6 GPIO_ACTIVE_HIGH>;
 };
 
 &led3 {
-    gpios = <&pcal6408a 7 GPIO_ACTIVE_HIGH>;
+	gpios = <&pcal6408a 7 GPIO_ACTIVE_HIGH>;
+};
+
+&spi3 {
+	cs-gpios = <&arduino_header 16 GPIO_ACTIVE_LOW>, /* D10 */
+		   <&gpio0 25 GPIO_ACTIVE_LOW>;
+	mx25r64: mx25r6435f@1 {
+		compatible = "jedec,spi-nor";
+		reg = <1>;
+		spi-max-frequency = <8000000>;
+		jedec-id = [c2 28 17];
+		sfdp-bfp = [
+			e5 20 f1 ff  ff ff ff 03  44 eb 08 6b  08 3b 04 bb
+			ee ff ff ff  ff ff 00 ff  ff ff 00 ff  0c 20 0f 52
+			10 d8 00 ff  23 72 f5 00  82 ed 04 cc  44 83 68 44
+			30 b0 30 b0  f7 c4 d5 5c  00 be 29 ff  f0 d0 ff ff
+		];
+		size = <67108864>;
+		mxicy,mx25r-power-mode = "high-performance";
+	};
+};
+
+/* Enable high drive mode for the SPI3 pins to get a square signal at 8 MHz */
+&spi3_default {
+	group1 {
+		nordic,drive-mode = <NRF_DRIVE_H0H1>;
+	};
+};
+
+&pinctrl {
+	pdm0_default: pdm0_default {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 0, 3)>,
+					<NRF_PSEL(PDM_DIN, 0, 4)>;
+		};
+	};
+};
+
+dmic_dev: &pdm0 {
+	status = "okay";
+	pinctrl-0 = <&pdm0_default>;
+	pinctrl-names = "default";
 };
