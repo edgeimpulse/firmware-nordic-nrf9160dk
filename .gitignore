@@ -8,3 +8,5 @@ modules/
 tools/
 *.hex
 board-controller/build/
+create-arduino-library.sh
+
