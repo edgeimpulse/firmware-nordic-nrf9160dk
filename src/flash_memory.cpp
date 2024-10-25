@@ -111,8 +111,8 @@ EiFlashMemory::EiFlashMemory(uint32_t config_size):
         EXTERNAL_FLASH_DEVICE_SIZE_BYTES,
         CONFIG_SPI_NOR_FLASH_LAYOUT_PAGE_SIZE),
     flash_dev(DEVICE_DT_GET(DT_COMPAT_GET_ANY_STATUS_OKAY(jedec_spi_nor)))
-{
+    {
     if (!device_is_ready(this->flash_dev)) {
-		LOG_ERR("%s: device not ready.", this->flash_dev->name);
-	}
+        LOG_ERR("%s: device not ready.", this->flash_dev->name);
+    }
 }
